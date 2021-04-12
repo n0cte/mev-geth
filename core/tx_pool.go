@@ -514,13 +514,18 @@ func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]t
 	var bundles []mevBundle
 
 	for _, bundle := range pool.mevBundles {
+		if bundle.blockNumber.Cmp(common.Big0) == 0 {
+			txBundles = append(txBundles, bundle.txs)
+			continue
+		}
+
 		// Prune outdated bundles
-		if (bundle.maxTimestamp != 0 && blockTimestamp > bundle.maxTimestamp) || (bundle.blockNumber.Cmp(common.Big0) != 0 && blockNumber.Cmp(bundle.blockNumber) > 0) {
+		if (bundle.maxTimestamp != 0 && blockTimestamp > bundle.maxTimestamp) || blockNumber.Cmp(bundle.blockNumber) > 0 {
 			continue
 		}
 
 		// Roll over future bundles
-		if (bundle.minTimestamp != 0 && blockTimestamp < bundle.minTimestamp) || (bundle.blockNumber.Cmp(common.Big0) != 0 && blockNumber.Cmp(bundle.blockNumber) < 0) {
+		if (bundle.minTimestamp != 0 && blockTimestamp < bundle.minTimestamp) || blockNumber.Cmp(bundle.blockNumber) < 0 {
 			bundles = append(bundles, bundle)
 			continue
 		}
