@@ -19,6 +19,7 @@ package miner
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -812,6 +813,7 @@ func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Addres
 }
 
 func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, interrupt *int32) bool {
+	log.Info("!!!worker.commitBundle - start")
 	// Short circuit if current is nil
 	if w.current == nil {
 		return true
@@ -819,7 +821,8 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 
 	var coalescedLogs []*types.Log
 
-	for _, tx := range txs {
+	for idx, tx := range txs {
+		log.Info("!!!worker.commitBundle - tx", "index", idx)
 		// In the following three cases, we will interrupt the execution of the transaction.
 		// (1) new head block event arrival, the interrupt signal is 1
 		// (2) worker start or restart, the interrupt signal is 1
@@ -827,8 +830,10 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 		// For the first two cases, the semi-finished work will be discarded.
 		// For the third case, the semi-finished work will be submitted to the consensus engine.
 		if interrupt != nil && atomic.LoadInt32(interrupt) != commitInterruptNone {
+			log.Info("!!!worker.commitBundle - interrupt")
 			// Notify resubmit loop to increase resubmitting interval due to too frequent commits.
 			if atomic.LoadInt32(interrupt) == commitInterruptResubmit {
+				log.Info("!!!worker.commitBundle - commitInterruptResubmit")
 				ratio := float64(w.current.header.GasLimit-w.current.gasPool.Gas()) / float64(w.current.header.GasLimit)
 				if ratio < 0.1 {
 					ratio = 0.1
@@ -838,15 +843,16 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 					inc:   true,
 				}
 			}
+			log.Info("!!!!!!!!!!!!!!!!!!interrupt")
 			return atomic.LoadInt32(interrupt) == commitInterruptNewHead
 		}
 		// If we don't have enough gas for any further transactions then we're done
 		if w.current.gasPool.Gas() < params.TxGas {
-			log.Trace("Not enough gas for further transactions", "have", w.current.gasPool, "want", params.TxGas)
+			log.Info("Not enough gas for further transactions", "have", w.current.gasPool, "want", params.TxGas)
 			break
 		}
 		if tx == nil {
-			log.Error("Unexpected nil transaction in bundle")
+			log.Info("Unexpected nil transaction in bundle")
 			return true
 		}
 		// Error may be ignored here. The error has already been checked
@@ -857,27 +863,31 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 		// Check whether the tx is replay protected. If we're not in the EIP155 hf
 		// phase, start ignoring the sender until we do.
 		if tx.Protected() && !w.chainConfig.IsEIP155(w.current.header.Number) {
-			log.Debug("Unexpected protected transaction in bundle")
+			log.Info("Unexpected protected transaction in bundle")
 			return true
 		}
+
 		// Start executing the transaction
 		w.current.state.Prepare(tx.Hash(), common.Hash{}, w.current.tcount)
 
 		logs, err := w.commitTransaction(tx, coinbase, true)
+		if err != nil {
+			log.Info("!!!worker.commitBundle - commit error", "error", err.Error())
+		}
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
-			log.Error("Unexpected gas limit exceeded for current block in the bundle", "sender", from)
+			log.Info("Unexpected gas limit exceeded for current block in the bundle", "sender", from)
 			return true
 
 		case core.ErrNonceTooLow:
 			// New head notification data race between the transaction pool and miner, shift
-			log.Error("Transaction with low nonce in the bundle", "sender", from, "nonce", tx.Nonce())
+			log.Info("Transaction with low nonce in the bundle", "sender", from, "nonce", tx.Nonce())
 			return true
 
 		case core.ErrNonceTooHigh:
 			// Reorg notification data race between the transaction pool and miner, skip account =
-			log.Error("Account with high nonce in the bundle", "sender", from, "nonce", tx.Nonce())
+			log.Info("Account with high nonce in the bundle", "sender", from, "nonce", tx.Nonce())
 			return true
 
 		case nil:
@@ -889,7 +899,7 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 		default:
 			// Strange error, discard the transaction and get the next in line (note, the
 			// nonce-too-high clause will prevent us from executing in vain).
-			log.Error("Transaction failed in the bundle", "hash", tx.Hash(), "err", err)
+			log.Info("Transaction failed in the bundle", "hash", tx.Hash(), "err", err)
 			return true
 		}
 	}
@@ -912,8 +922,10 @@ func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, i
 	// Notify resubmit loop to decrease resubmitting interval if current interval is larger
 	// than the user-specified one.
 	if interrupt != nil {
+		log.Info("!!!worker.commitBundle - resubmitAdjustCh <- &intervalAdjust{inc: false}")
 		w.resubmitAdjustCh <- &intervalAdjust{inc: false}
 	}
+	log.Info("!!!worker.commitBundle - end")
 	return false
 }
 
@@ -1143,6 +1155,8 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	}
 	if w.flashbots.isFlashbots {
 		bundles, err := w.eth.TxPool().MevBundles(header.Number, header.Time)
+		log.Info(fmt.Sprintf("w.eth.txPool.MevBundles: txs %d", len(bundles)))
+
 		if err != nil {
 			log.Error("Failed to fetch pending transactions", "err", err)
 			return

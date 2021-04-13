@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -512,8 +513,10 @@ func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]t
 	var txBundles []types.Transactions
 	// rolled over values
 	var bundles []mevBundle
-
+	log.Info(fmt.Sprintf("TxPool.MevBundles: old bundles %d", len(pool.mevBundles)))
 	for _, bundle := range pool.mevBundles {
+		log.Info(fmt.Sprintf("TxPool.MevBundles: times [%d] < [%d] < [%d]", bundle.minTimestamp, blockTimestamp, bundle.maxTimestamp))
+
 		if bundle.blockNumber.Cmp(common.Big0) == 0 {
 			txBundles = append(txBundles, bundle.txs)
 			continue
@@ -537,6 +540,10 @@ func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]t
 	}
 
 	pool.mevBundles = bundles
+	log.Info(fmt.Sprintf("TxPool.MevBundles: new bundles %d", len(pool.mevBundles)))
+	for i := range txBundles {
+		log.Info(fmt.Sprintf("TxPool.MevBundles: txs %d", len(txBundles[i])))
+	}
 	return txBundles, nil
 }
 
@@ -544,13 +551,14 @@ func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]t
 func (pool *TxPool) AddMevBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-
+	log.Info(fmt.Sprintf("TxPool.AddMevBundle: old %d", len(pool.mevBundles)))
 	pool.mevBundles = append(pool.mevBundles, mevBundle{
 		txs:          txs,
 		blockNumber:  blockNumber,
 		minTimestamp: minTimestamp,
 		maxTimestamp: maxTimestamp,
 	})
+	log.Info(fmt.Sprintf("TxPool.AddMevBundle: new %d", len(pool.mevBundles)))
 	return nil
 }
 
@@ -609,6 +617,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	}
 	// Ensure the transaction adheres to nonce ordering
 	if pool.currentState.GetNonce(from) > tx.Nonce() {
+		log.Info(fmt.Sprintf("TxPool.validateTx: %s", ErrNonceTooLow))
 		return ErrNonceTooLow
 	}
 	// Transactor should have enough funds to cover the costs
@@ -619,9 +628,11 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	// Ensure the transaction has more gas than the basic tx fee.
 	intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.istanbul)
 	if err != nil {
+		log.Info(fmt.Sprintf("TxPool.validateTx: %s", err))
 		return err
 	}
 	if tx.Gas() < intrGas {
+		log.Info(fmt.Sprintf("TxPool.validateTx: %s", ErrIntrinsicGas))
 		return ErrIntrinsicGas
 	}
 	return nil
