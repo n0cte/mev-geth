@@ -26,6 +26,7 @@ import (
 	"time"
 
 	mapset "github.com/deckarep/golang-set"
+	"github.com/ethereum/go-ethereum/bmetrics"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -813,6 +814,8 @@ func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Addres
 }
 
 func (w *worker) commitBundle(txs types.Transactions, coinbase common.Address, interrupt *int32) bool {
+	defer bmetrics.TimeTrack(len([]*types.Transaction(txs)), time.Now())
+
 	log.Info("!!!worker.commitBundle - start")
 	// Short circuit if current is nil
 	if w.current == nil {
@@ -1155,7 +1158,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	}
 	if w.flashbots.isFlashbots {
 		bundles, err := w.eth.TxPool().MevBundles(header.Number, header.Time)
-		log.Info(fmt.Sprintf("w.eth.txPool.MevBundles: txs %d", len(bundles)))
+		log.Info(fmt.Sprintf("w.eth.txPool.MevBundles: bundles %d", len(bundles)))
 
 		if err != nil {
 			log.Error("Failed to fetch pending transactions", "err", err)
@@ -1163,6 +1166,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		}
 		maxBundle, bundlePrice, ethToCoinbase, gasUsed := w.findMostProfitableBundle(bundles, w.coinbase, parent, header)
 		log.Info("Flashbots bundle", "ethToCoinbase", ethToCoinbase, "gasUsed", gasUsed, "bundlePrice", bundlePrice, "bundleLength", len(maxBundle))
+		log.Info(fmt.Sprintf("w.eth.txPool.MevBundles: txs %d", len(maxBundle)))
 		if w.commitBundle(maxBundle, w.coinbase, interrupt) {
 			return
 		}
